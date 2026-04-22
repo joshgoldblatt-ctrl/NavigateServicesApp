@@ -1,0 +1,1536 @@
+<!--
+================================================================================
+  App:          LaGuardia Navigate Services App
+  Version:      2.0
+  Released:     April 12, 2026
+  Developed by: Josh Goldblatt using Claude
+================================================================================
+  CHANGELOG (most recent first)
+--------------------------------------------------------------------------------
+  v2.0  2026-04-12
+    - New "By Staff" tab alongside the existing "By Location" view.
+      Grouped as Care Unit -> Location -> Staff Organizer, with a
+      services table under each staff organizer. Staff are sorted
+      alphabetically within each location. A staff organizer who works
+      at multiple locations appears under each one.
+    - Filters section is now collapsible and collapsed by default.
+      Same toggle pattern as Care Unit headers (click to expand,
+      keyboard-accessible with Enter / Space).
+    - Search boxes added to Location, Staff Organizer Name, and Service
+      multi-select filters. The search filters only what's visible in
+      the checkbox list; it does not uncheck items that scroll out of
+      view. Cleared when Reset filters is clicked.
+    - Export switched from CSV to XLSX (two sheets: "By Location" and
+      "By Staff"). Filename: Navigate_Services_MM.DD.YY.xlsx. Requires
+      SheetJS (loaded from CDN, same library used by the Advising
+      Metrics App).
+    - Scorecard now includes a "Staff Organizers" count alongside Care
+      Units, Locations, and Unique Services.
+    - All existing filters (date range, location, staff, service) apply
+      to both tabs identically.
+  v1.5  2026-04-12
+    - Added Care Unit grouping: appointments are now grouped by Care Unit
+      first, then by Location. Care Unit is auto-detected (column name
+      "Care Unit").
+    - Care Units render as collapsible headers (collapsed by default).
+      Clicking the header toggles the Locations inside. Keyboard
+      accessible (Enter / Space).
+    - Care Units sorted alphabetically; Locations within each Care Unit
+      sorted alphabetically.
+    - Scorecard now includes a "Care Units" count alongside Locations
+      and Unique Services.
+    - CSV export now leads with a "Care Unit" column: Care Unit,
+      Location, Service, Appointment Count, Unique Students.
+    - Appointments with a missing Care Unit value are grouped under
+      "Unknown Care Unit" (not expected in practice).
+  v1.0  2026-04-12
+    - Initial release
+    - Accepts a single Navigate appointment report CSV (same format as the
+      Advising Metrics App appointment file)
+    - Unbundles comma-separated "Reported Services" values so each service
+      is counted individually
+    - Filters: date range (start/end), Location (multi-select),
+      Staff Organizer Name (multi-select), Service (multi-select)
+    - Display: grouped by Location -> Service, with Appointment Count and
+      Unique Students per service within each location
+    - Summary scorecard at top showing total appointments, locations,
+      and unique services
+    - CSV export of the unbundled services data
+================================================================================
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LaGuardia Navigate Services App - Version 2.0</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --blue: #378ADD;
+    --blue-dark: #185FA5;
+    --blue-light: #E6F1FB;
+    --blue-mid: #85B7EB;
+    --teal: #0F6E56;
+    --teal-light: #E1F5EE;
+    --teal-mid: #5DCAA5;
+    --gray-bg: #F7F6F2;
+    --gray-border: rgba(0,0,0,0.1);
+    --gray-text: #888780;
+    --text: #1a1a1a;
+    --text-secondary: #5F5E5A;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Georgia', serif;
+    background: #F4F2EC;
+    color: var(--text);
+    min-height: 100vh;
+    padding: 2rem 1rem 4rem;
+  }
+
+  .page-wrap {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  header {
+    margin-bottom: 2rem;
+    border-bottom: 1px solid var(--gray-border);
+    padding-bottom: 1.5rem;
+  }
+
+  header h1 {
+    font-size: 1.75rem;
+    font-weight: normal;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  header p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-top: 0.35rem;
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+  }
+
+  .meta {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 11px;
+    color: var(--gray-text);
+    margin-top: 0.5rem;
+    letter-spacing: 0.02em;
+  }
+
+  #drop-zone {
+    background: white;
+    border: 1.5px dashed #C0BDB4;
+    border-radius: var(--radius);
+    padding: 2.5rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    margin-bottom: 2rem;
+  }
+
+  #drop-zone:hover, #drop-zone.hover {
+    border-color: var(--blue);
+    background: var(--blue-light);
+  }
+
+  #drop-zone input { display: none; }
+
+  .upload-arrow {
+    width: 36px; height: 36px;
+    background: var(--blue-light);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 12px;
+    font-size: 18px;
+    color: var(--blue-dark);
+  }
+
+  .upload-label {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+
+  .upload-label span {
+    color: var(--blue-dark);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  #file-name {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 12px;
+    color: #B4B2A9;
+    margin-top: 8px;
+  }
+
+  .error-msg {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 13px;
+    color: #A32D2D;
+    background: #FCEBEB;
+    border: 0.5px solid #F09595;
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin-bottom: 1rem;
+    display: none;
+  }
+
+  #results { display: none; }
+
+  /* Filter card */
+  .card {
+    background: white;
+    border-radius: var(--radius);
+    border: 1px solid var(--gray-border);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--gray-border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .card-accent {
+    width: 4px;
+    height: 22px;
+    background: var(--blue);
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .card-accent.teal { background: var(--teal); }
+
+  .card-title {
+    font-size: 1rem;
+    font-weight: normal;
+    letter-spacing: -0.01em;
+  }
+
+  .filters-body {
+    padding: 1.25rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem 1.25rem;
+  }
+
+  @media (max-width: 700px) {
+    .filters-body { grid-template-columns: 1fr; }
+  }
+
+  .filter-group label {
+    display: block;
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+
+  .filter-group input[type="date"],
+  .filter-group select {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 13px;
+    padding: 8px 10px;
+    border: 1px solid var(--gray-border);
+    border-radius: var(--radius-sm);
+    background: white;
+    color: var(--text);
+    width: 100%;
+  }
+
+  .filter-group input[type="date"]:focus,
+  .filter-group select:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(55, 138, 221, 0.15);
+  }
+
+  .date-range {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .date-range input { flex: 1; }
+
+  .date-range span {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .multi-select {
+    max-height: 140px;
+    overflow-y: auto;
+    border: 1px solid var(--gray-border);
+    border-radius: var(--radius-sm);
+    background: white;
+    padding: 6px 10px;
+  }
+
+  .multi-select-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .multi-select-item input[type="checkbox"] { cursor: pointer; }
+
+  .multi-select-controls {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 4px;
+  }
+
+  .link-btn {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 11px;
+    color: var(--blue-dark);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  .filter-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    border-top: 1px solid var(--gray-border);
+    padding-top: 1rem;
+  }
+
+  .btn {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 18px;
+    border-radius: var(--radius-sm);
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s;
+    letter-spacing: 0.01em;
+  }
+
+  .btn.primary {
+    background: var(--blue);
+    color: white;
+  }
+
+  .btn.primary:hover { background: var(--blue-dark); }
+
+  .btn.secondary {
+    background: white;
+    color: var(--text-secondary);
+    border: 1px solid var(--gray-border);
+  }
+
+  .btn.secondary:hover {
+    background: var(--gray-bg);
+    color: var(--text);
+  }
+
+  .btn.teal {
+    background: var(--teal);
+    color: white;
+  }
+
+  .btn.teal:hover { background: #0A5A46; }
+
+  /* Scorecard */
+  .scorecard {
+    display: flex;
+    gap: 0;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--gray-border);
+    background: #FAFAF7;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+  }
+
+  .scorecard-item { display: flex; flex-direction: column; gap: 2px; }
+
+  .scorecard-label {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+  }
+
+  .scorecard-num {
+    font-size: 1.4rem;
+    font-weight: normal;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    color: var(--text);
+  }
+
+  .scorecard-num.teal { color: var(--teal); }
+  .scorecard-num.blue { color: var(--blue-dark); }
+
+  .scorecard-divider {
+    width: 1px; height: 36px;
+    background: var(--gray-border);
+    flex-shrink: 0;
+  }
+
+  /* Export row */
+  .export-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 1.25rem;
+  }
+
+  /* Location blocks */
+  .location-block {
+    background: white;
+    border-radius: var(--radius);
+    border: 1px solid var(--gray-border);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+  }
+
+  .location-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--gray-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .location-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .location-name {
+    font-size: 1rem;
+    font-weight: normal;
+    letter-spacing: -0.01em;
+  }
+
+  .location-meta {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .services-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 13px;
+  }
+
+  .services-table th {
+    text-align: left;
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--gray-border);
+    background: #FAFAF7;
+  }
+
+  .services-table th.num { text-align: right; }
+
+  .services-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+    vertical-align: top;
+  }
+
+  .services-table tr:last-child td { border-bottom: none; }
+
+  .services-table td.num {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .services-table td.service-name {
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .empty-state {
+    padding: 3rem 1.5rem;
+    text-align: center;
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+
+  /* Care Unit collapsible block */
+  .care-unit-block {
+    margin-bottom: 1rem;
+  }
+
+  .care-unit-header {
+    background: var(--blue-light);
+    border: 1px solid var(--blue-mid);
+    border-radius: var(--radius);
+    padding: 0.9rem 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    user-select: none;
+  }
+
+  .care-unit-header:hover {
+    background: #DCEAF8;
+  }
+
+  .care-unit-header:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 2px;
+  }
+
+  .care-unit-header.expanded {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .care-unit-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .care-unit-toggle {
+    font-size: 10px;
+    color: var(--blue-dark);
+    width: 12px;
+    display: inline-block;
+    text-align: center;
+  }
+
+  .care-unit-name {
+    font-size: 1.05rem;
+    font-weight: normal;
+    letter-spacing: -0.01em;
+    color: var(--blue-dark);
+  }
+
+  .care-unit-body {
+    padding: 1rem 0 0 0;
+    border: 1px solid var(--blue-mid);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+    background: #FDFCF8;
+    padding: 1rem 1rem 0.25rem 1rem;
+  }
+
+  .care-unit-body .location-block {
+    margin-bottom: 1rem;
+  }
+
+  .care-unit-body .location-block:last-child {
+    margin-bottom: 0.75rem;
+  }
+
+  /* Collapsible filters section */
+  .card-header.collapsible {
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+
+  .card-header.collapsible:hover {
+    background: #FAFAF7;
+  }
+
+  .card-header.collapsible:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: -2px;
+  }
+
+  .card-header-toggle {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-secondary);
+    width: 12px;
+    display: inline-block;
+    text-align: center;
+  }
+
+  /* Search box inside multi-select */
+  .multi-select-search {
+    width: 100%;
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 12px;
+    padding: 6px 8px;
+    border: 1px solid var(--gray-border);
+    border-radius: var(--radius-sm);
+    background: white;
+    margin-bottom: 6px;
+  }
+
+  .multi-select-search:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 2px rgba(55, 138, 221, 0.15);
+  }
+
+  .multi-select-item.hidden {
+    display: none;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 1.25rem;
+    border-bottom: 1px solid var(--gray-border);
+  }
+
+  .tab {
+    font-family: 'Helvetica Neue', Helvetica, sans-serif;
+    font-size: 13px;
+    padding: 10px 18px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+  }
+
+  .tab:hover {
+    color: var(--text);
+  }
+
+  .tab.active {
+    color: var(--blue-dark);
+    border-bottom-color: var(--blue);
+    font-weight: 500;
+  }
+
+  .tab-panel {
+    display: none;
+  }
+
+  .tab-panel.active {
+    display: block;
+  }
+
+  /* Staff block - for By Staff view */
+  .staff-block {
+    background: white;
+    border-radius: var(--radius);
+    border: 1px solid var(--gray-border);
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+  }
+
+  .staff-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--gray-border);
+    background: var(--teal-light);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .staff-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .staff-accent {
+    width: 4px;
+    height: 22px;
+    background: var(--teal);
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .staff-name {
+    font-size: 0.95rem;
+    font-weight: normal;
+    letter-spacing: -0.01em;
+    color: var(--teal);
+  }
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <header>
+    <h1>Navigate Services App</h1>
+    <p>Upload a Navigate appointment report CSV to see services broken out by location, with appointment counts and unique students.</p>
+    <div class="meta">Version 2.0 &middot; Released April 12, 2026 &middot; Developed by Josh Goldblatt using Claude</div>
+  </header>
+
+  <div id="drop-zone"
+    onclick="document.getElementById('file-input').click()"
+    ondragover="handleDragOver(event)"
+    ondragleave="handleDragLeave(event)"
+    ondrop="handleDrop(event)">
+    <div class="upload-arrow">&#8681;</div>
+    <div class="upload-label">Drop your CSV here, or <span>browse</span></div>
+    <div id="file-name">No file selected</div>
+    <input type="file" id="file-input" accept=".csv" onchange="handleFile(this.files[0])">
+  </div>
+
+  <div class="error-msg" id="error-msg"></div>
+
+  <div id="results">
+
+    <!-- FILTERS -->
+    <div class="card">
+      <div class="card-header collapsible" id="filters-header" role="button" tabindex="0">
+        <div class="card-accent"></div>
+        <div class="card-title">Filters</div>
+        <span class="card-header-toggle" id="filters-toggle">&#9654;</span>
+      </div>
+      <div class="filters-body" id="filters-body" style="display: none;">
+        <div class="filter-group">
+          <label>Date Range</label>
+          <div class="date-range">
+            <input type="date" id="filter-date-start">
+            <span>to</span>
+            <input type="date" id="filter-date-end">
+          </div>
+        </div>
+        <div class="filter-group">
+          <label>Location</label>
+          <input type="text" class="multi-select-search" id="filter-location-search" placeholder="Search locations..." oninput="filterMultiSelect('filter-location', this.value)">
+          <div class="multi-select" id="filter-location"></div>
+          <div class="multi-select-controls">
+            <button type="button" class="link-btn" onclick="toggleAll('filter-location', true)">Select all</button>
+            <button type="button" class="link-btn" onclick="toggleAll('filter-location', false)">Clear</button>
+          </div>
+        </div>
+        <div class="filter-group">
+          <label>Staff Organizer Name</label>
+          <input type="text" class="multi-select-search" id="filter-staff-search" placeholder="Search staff..." oninput="filterMultiSelect('filter-staff', this.value)">
+          <div class="multi-select" id="filter-staff"></div>
+          <div class="multi-select-controls">
+            <button type="button" class="link-btn" onclick="toggleAll('filter-staff', true)">Select all</button>
+            <button type="button" class="link-btn" onclick="toggleAll('filter-staff', false)">Clear</button>
+          </div>
+        </div>
+        <div class="filter-group">
+          <label>Service</label>
+          <input type="text" class="multi-select-search" id="filter-service-search" placeholder="Search services..." oninput="filterMultiSelect('filter-service', this.value)">
+          <div class="multi-select" id="filter-service"></div>
+          <div class="multi-select-controls">
+            <button type="button" class="link-btn" onclick="toggleAll('filter-service', true)">Select all</button>
+            <button type="button" class="link-btn" onclick="toggleAll('filter-service', false)">Clear</button>
+          </div>
+        </div>
+        <div class="filter-actions">
+          <button type="button" class="btn secondary" onclick="resetFilters()">Reset filters</button>
+          <button type="button" class="btn primary" onclick="applyFilters()">Apply filters</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUMMARY -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-accent teal"></div>
+        <div class="card-title">Summary</div>
+      </div>
+      <div class="scorecard" id="scorecard"></div>
+    </div>
+
+    <!-- EXPORT -->
+    <div class="export-row">
+      <button type="button" class="btn teal" onclick="exportXlsx()">Download Excel</button>
+    </div>
+
+    <!-- TABS -->
+    <div class="tabs" id="tabs">
+      <button type="button" class="tab active" data-tab="by-location" onclick="switchTab('by-location')">By Location</button>
+      <button type="button" class="tab" data-tab="by-staff" onclick="switchTab('by-staff')">By Staff</button>
+    </div>
+
+    <!-- TAB PANELS -->
+    <div class="tab-panel active" id="panel-by-location">
+      <div id="location-blocks"></div>
+    </div>
+    <div class="tab-panel" id="panel-by-staff">
+      <div id="staff-blocks"></div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+// =============================================================================
+// State
+// =============================================================================
+var rawData = null;       // Full parsed array of row objects
+var columns = null;       // { date, services, location, careUnit, staff, studentId }
+var filters = {
+  dateStart: null,
+  dateEnd: null,
+  locations: null,  // Set of allowed values, or null for "all"
+  staff: null,
+  services: null
+};
+var currentResult = null; // The currently displayed result (for export)
+
+// =============================================================================
+// UI toggles: filter section, tabs, multi-select search
+// =============================================================================
+function setupFiltersCollapse() {
+  var header = document.getElementById('filters-header');
+  if (!header || header._wired) return;
+  header._wired = true;
+
+  function toggle() {
+    var body = document.getElementById('filters-body');
+    var toggleEl = document.getElementById('filters-toggle');
+    var isOpen = body.style.display !== 'none';
+    body.style.display = isOpen ? 'none' : 'grid';
+    toggleEl.innerHTML = isOpen ? '&#9654;' : '&#9660;';
+  }
+
+  header.addEventListener('click', toggle);
+  header.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggle();
+    }
+  });
+}
+
+function switchTab(tabId) {
+  var tabs = document.querySelectorAll('#tabs .tab');
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === tabId);
+  }
+  var panels = document.querySelectorAll('.tab-panel');
+  for (var j = 0; j < panels.length; j++) {
+    panels[j].classList.toggle('active', panels[j].id === 'panel-' + tabId);
+  }
+}
+
+function filterMultiSelect(containerId, query) {
+  var q = (query || '').trim().toLowerCase();
+  var items = document.querySelectorAll('#' + containerId + ' .multi-select-item');
+  for (var i = 0; i < items.length; i++) {
+    var label = items[i].querySelector('span');
+    var text = label ? label.textContent.toLowerCase() : '';
+    var match = !q || text.indexOf(q) !== -1;
+    items[i].classList.toggle('hidden', !match);
+  }
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+function showError(msg) {
+  var el = document.getElementById('error-msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function clearError() {
+  document.getElementById('error-msg').style.display = 'none';
+}
+
+function findColumn(keys, candidates) {
+  for (var i = 0; i < candidates.length; i++) {
+    if (keys.indexOf(candidates[i]) !== -1) return candidates[i];
+  }
+  return null;
+}
+
+// Parse M/D/YYYY, MM/DD/YYYY, or ISO date string to Date (local midnight)
+function parseApptDate(s) {
+  if (!s) return null;
+  var str = String(s).trim();
+  if (!str) return null;
+  // M/D/YYYY
+  var parts = str.split('/');
+  if (parts.length === 3) {
+    var m = parseInt(parts[0], 10) - 1;
+    var d = parseInt(parts[1], 10);
+    var y = parseInt(parts[2], 10);
+    if (y < 100) y += 2000;
+    var dt = new Date(y, m, d);
+    if (!isNaN(dt.getTime())) return dt;
+  }
+  // Fallback: Date.parse
+  var dt2 = new Date(str);
+  if (!isNaN(dt2.getTime())) {
+    // Normalize to midnight local
+    return new Date(dt2.getFullYear(), dt2.getMonth(), dt2.getDate());
+  }
+  return null;
+}
+
+function toISODate(dt) {
+  if (!dt || isNaN(dt.getTime())) return '';
+  var y = dt.getFullYear();
+  var m = String(dt.getMonth() + 1).padStart(2, '0');
+  var d = String(dt.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + d;
+}
+
+function parseISODate(s) {
+  if (!s) return null;
+  var parts = s.split('-');
+  if (parts.length !== 3) return null;
+  var y = parseInt(parts[0], 10);
+  var m = parseInt(parts[1], 10) - 1;
+  var d = parseInt(parts[2], 10);
+  var dt = new Date(y, m, d);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+
+// =============================================================================
+// File drop / upload
+// =============================================================================
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.add('hover');
+}
+
+function handleDragLeave(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('hover');
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('hover');
+  var files = e.dataTransfer.files;
+  if (files && files.length > 0) handleFile(files[0]);
+}
+
+function handleFile(file) {
+  if (!file) return;
+  clearError();
+  document.getElementById('file-name').textContent = file.name;
+
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    worker: false,
+    complete: function(res) {
+      if (!res.data || res.data.length === 0) {
+        showError('No rows found in the CSV.');
+        return;
+      }
+      rawData = res.data;
+      if (!detectColumns()) return;
+      buildFilterOptions();
+      resetFilters();
+      applyFilters();
+      setupFiltersCollapse();
+      document.getElementById('results').style.display = 'block';
+    },
+    error: function(err) {
+      showError('Failed to parse CSV: ' + err.message);
+    }
+  });
+}
+
+function detectColumns() {
+  var keys = Object.keys(rawData[0]);
+  columns = {
+    date: findColumn(keys, ['Reported Start Date', 'Start Date', 'Date', 'Appointment Date']),
+    services: findColumn(keys, ['Reported Services', 'Reported_Services']),
+    location: findColumn(keys, ['Location', 'Office', 'Advising Office']),
+    careUnit: findColumn(keys, ['Care Unit', 'Care_Unit', 'CareUnit']),
+    staff: findColumn(keys, ['Staff Organizer Name', 'Professional Advisor', 'Advisor']),
+    studentId: findColumn(keys, ['Student ID', 'StudentID', 'Student_ID', 'ID'])
+  };
+  if (!columns.services) {
+    showError('Could not find a "Reported Services" column in the CSV.');
+    return false;
+  }
+  if (!columns.location) {
+    showError('Could not find a "Location" column in the CSV.');
+    return false;
+  }
+  return true;
+}
+
+// =============================================================================
+// Filter option building
+// =============================================================================
+function buildFilterOptions() {
+  var locations = new Set();
+  var staff = new Set();
+  var services = new Set();
+  var minDt = null, maxDt = null;
+
+  for (var i = 0; i < rawData.length; i++) {
+    var row = rawData[i];
+    var loc = row[columns.location];
+    if (loc) locations.add(String(loc).trim());
+    var st = columns.staff ? row[columns.staff] : null;
+    if (st) staff.add(String(st).trim());
+    var svcRaw = row[columns.services];
+    if (svcRaw) {
+      var svcList = String(svcRaw).split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+      for (var j = 0; j < svcList.length; j++) services.add(svcList[j]);
+    }
+    if (columns.date) {
+      var dt = parseApptDate(row[columns.date]);
+      if (dt) {
+        if (!minDt || dt < minDt) minDt = dt;
+        if (!maxDt || dt > maxDt) maxDt = dt;
+      }
+    }
+  }
+
+  renderMultiSelect('filter-location', Array.from(locations).sort());
+  renderMultiSelect('filter-staff', Array.from(staff).sort());
+  renderMultiSelect('filter-service', Array.from(services).sort());
+
+  var dStart = document.getElementById('filter-date-start');
+  var dEnd = document.getElementById('filter-date-end');
+  if (minDt && maxDt) {
+    dStart.min = toISODate(minDt);
+    dStart.max = toISODate(maxDt);
+    dEnd.min = toISODate(minDt);
+    dEnd.max = toISODate(maxDt);
+  }
+}
+
+function renderMultiSelect(containerId, values) {
+  var container = document.getElementById(containerId);
+  container.innerHTML = '';
+  if (values.length === 0) {
+    container.innerHTML = '<div style="font-family: \'Helvetica Neue\', Helvetica, sans-serif; font-size: 12px; color: var(--text-secondary); padding: 4px 0;">No values found</div>';
+    return;
+  }
+  for (var i = 0; i < values.length; i++) {
+    var id = containerId + '_' + i;
+    var label = document.createElement('label');
+    label.className = 'multi-select-item';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = values[i];
+    cb.checked = true;
+    var span = document.createElement('span');
+    span.textContent = values[i];
+    label.appendChild(cb);
+    label.appendChild(span);
+    container.appendChild(label);
+  }
+}
+
+function toggleAll(containerId, checked) {
+  var boxes = document.querySelectorAll('#' + containerId + ' input[type="checkbox"]');
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = checked;
+}
+
+function getSelectedMulti(containerId) {
+  var boxes = document.querySelectorAll('#' + containerId + ' input[type="checkbox"]:checked');
+  var out = new Set();
+  for (var i = 0; i < boxes.length; i++) out.add(boxes[i].value);
+  return out;
+}
+
+function resetFilters() {
+  document.getElementById('filter-date-start').value = '';
+  document.getElementById('filter-date-end').value = '';
+  toggleAll('filter-location', true);
+  toggleAll('filter-staff', true);
+  toggleAll('filter-service', true);
+  // Clear search boxes and unhide all items
+  var searches = ['filter-location-search', 'filter-staff-search', 'filter-service-search'];
+  for (var i = 0; i < searches.length; i++) {
+    var el = document.getElementById(searches[i]);
+    if (el) el.value = '';
+  }
+  var hiddenItems = document.querySelectorAll('.multi-select-item.hidden');
+  for (var j = 0; j < hiddenItems.length; j++) hiddenItems[j].classList.remove('hidden');
+}
+
+function applyFilters() {
+  if (!rawData) return;
+  filters.dateStart = parseISODate(document.getElementById('filter-date-start').value);
+  filters.dateEnd = parseISODate(document.getElementById('filter-date-end').value);
+  filters.locations = getSelectedMulti('filter-location');
+  filters.staff = getSelectedMulti('filter-staff');
+  filters.services = getSelectedMulti('filter-service');
+  computeAndRender();
+}
+
+// =============================================================================
+// Core logic — unbundle services and aggregate
+// =============================================================================
+function computeAndRender() {
+  // Result for By Location: { careUnit -> { __total, locations: { locName -> { __total, services: { svcName -> { count, students } } } } } }
+  var byCU = {};
+  // Result for By Staff: { careUnit -> { __total, locations: { locName -> { __total, staff: { staffName -> { __total, services: { svcName -> { count, students } } } } } } } }
+  var byStaff = {};
+  var totalAppointments = 0;
+  var uniqueServices = new Set();
+  var uniqueLocations = new Set();
+  var uniqueStaff = new Set();
+
+  for (var i = 0; i < rawData.length; i++) {
+    var row = rawData[i];
+
+    // Filter by location
+    var loc = row[columns.location];
+    if (!loc) continue;
+    loc = String(loc).trim();
+    if (!loc) continue;
+    if (filters.locations && filters.locations.size > 0 && !filters.locations.has(loc)) continue;
+
+    // Care Unit
+    var cu = columns.careUnit ? row[columns.careUnit] : null;
+    cu = cu ? String(cu).trim() : '';
+    if (!cu) cu = 'Unknown Care Unit';
+
+    // Staff
+    var staffName = columns.staff ? row[columns.staff] : null;
+    var staffStr = staffName ? String(staffName).trim() : '';
+    if (!staffStr) staffStr = 'Unknown Staff';
+    // Filter by staff
+    if (columns.staff && filters.staff && filters.staff.size > 0) {
+      if (!filters.staff.has(staffStr === 'Unknown Staff' ? '' : staffStr)) continue;
+    }
+
+    // Filter by date
+    if (filters.dateStart || filters.dateEnd) {
+      if (!columns.date) continue;
+      var dt = parseApptDate(row[columns.date]);
+      if (!dt) continue;
+      if (filters.dateStart && dt < filters.dateStart) continue;
+      if (filters.dateEnd && dt > filters.dateEnd) continue;
+    }
+
+    // Unbundle services and apply service filter
+    var svcRaw = row[columns.services];
+    if (!svcRaw || !String(svcRaw).trim()) continue;
+    var allSvcsForRow = String(svcRaw).split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+
+    var svcsForRow = allSvcsForRow.filter(function(s) {
+      return !filters.services || filters.services.size === 0 || filters.services.has(s);
+    });
+    if (svcsForRow.length === 0) continue;
+
+    totalAppointments++;
+    uniqueLocations.add(loc);
+    if (staffStr !== 'Unknown Staff') uniqueStaff.add(staffStr);
+
+    // === By Location structure ===
+    if (!byCU[cu]) byCU[cu] = { __total: 0, locations: {} };
+    byCU[cu].__total++;
+    if (!byCU[cu].locations[loc]) byCU[cu].locations[loc] = { __total: 0, services: {} };
+    byCU[cu].locations[loc].__total++;
+
+    // === By Staff structure ===
+    if (!byStaff[cu]) byStaff[cu] = { __total: 0, locations: {} };
+    byStaff[cu].__total++;
+    if (!byStaff[cu].locations[loc]) byStaff[cu].locations[loc] = { __total: 0, staff: {} };
+    byStaff[cu].locations[loc].__total++;
+    if (!byStaff[cu].locations[loc].staff[staffStr]) byStaff[cu].locations[loc].staff[staffStr] = { __total: 0, services: {} };
+    byStaff[cu].locations[loc].staff[staffStr].__total++;
+
+    var sid = columns.studentId ? row[columns.studentId] : null;
+
+    for (var j = 0; j < svcsForRow.length; j++) {
+      var svc = svcsForRow[j];
+      uniqueServices.add(svc);
+
+      // By Location
+      if (!byCU[cu].locations[loc].services[svc]) byCU[cu].locations[loc].services[svc] = { count: 0, students: {} };
+      byCU[cu].locations[loc].services[svc].count++;
+      if (sid) byCU[cu].locations[loc].services[svc].students[sid] = true;
+
+      // By Staff
+      if (!byStaff[cu].locations[loc].staff[staffStr].services[svc]) byStaff[cu].locations[loc].staff[staffStr].services[svc] = { count: 0, students: {} };
+      byStaff[cu].locations[loc].staff[staffStr].services[svc].count++;
+      if (sid) byStaff[cu].locations[loc].staff[staffStr].services[svc].students[sid] = true;
+    }
+  }
+
+  currentResult = {
+    byCU: byCU,
+    byStaff: byStaff,
+    totalAppointments: totalAppointments,
+    careUnitCount: Object.keys(byCU).length,
+    locationCount: uniqueLocations.size,
+    uniqueServiceCount: uniqueServices.size,
+    uniqueStaffCount: uniqueStaff.size
+  };
+
+  renderResult(currentResult);
+}
+
+function renderResult(result) {
+  // Scorecard
+  var scorecard = document.getElementById('scorecard');
+  scorecard.innerHTML = '';
+  function addScorecardItem(label, value, colorClass) {
+    var item = document.createElement('div');
+    item.className = 'scorecard-item';
+    item.innerHTML = '<div class="scorecard-label">' + label + '</div>' +
+      '<div class="scorecard-num ' + (colorClass || '') + '">' + value + '</div>';
+    return item;
+  }
+  function addDivider() {
+    var d = document.createElement('div');
+    d.className = 'scorecard-divider';
+    return d;
+  }
+
+  scorecard.appendChild(addScorecardItem('Total Appointments', result.totalAppointments.toLocaleString(), 'blue'));
+  scorecard.appendChild(addDivider());
+  scorecard.appendChild(addScorecardItem('Care Units', result.careUnitCount.toLocaleString(), ''));
+  scorecard.appendChild(addDivider());
+  scorecard.appendChild(addScorecardItem('Locations', result.locationCount.toLocaleString(), ''));
+  scorecard.appendChild(addDivider());
+  scorecard.appendChild(addScorecardItem('Staff Organizers', result.uniqueStaffCount.toLocaleString(), ''));
+  scorecard.appendChild(addDivider());
+  scorecard.appendChild(addScorecardItem('Unique Services', result.uniqueServiceCount.toLocaleString(), 'teal'));
+
+  renderByLocation(result);
+  renderByStaff(result);
+}
+
+function renderByLocation(result) {
+  var blocksContainer = document.getElementById('location-blocks');
+  blocksContainer.innerHTML = '';
+
+  var cuKeys = Object.keys(result.byCU).sort(function(a, b) { return a.localeCompare(b); });
+  if (cuKeys.length === 0) {
+    var empty = document.createElement('div');
+    empty.className = 'location-block';
+    empty.innerHTML = '<div class="empty-state">No appointments match the current filters.</div>';
+    blocksContainer.appendChild(empty);
+    return;
+  }
+
+  for (var ci = 0; ci < cuKeys.length; ci++) {
+    var cu = cuKeys[ci];
+    var cuData = result.byCU[cu];
+    var locKeys = Object.keys(cuData.locations).sort(function(a, b) { return a.localeCompare(b); });
+
+    var cuBlock = document.createElement('div');
+    cuBlock.className = 'care-unit-block';
+
+    var cuHeader = document.createElement('div');
+    cuHeader.className = 'care-unit-header';
+    cuHeader.setAttribute('role', 'button');
+    cuHeader.setAttribute('tabindex', '0');
+    cuHeader.innerHTML = '<div class="care-unit-header-left">' +
+      '<span class="care-unit-toggle">&#9654;</span>' +
+      '<div class="care-unit-name">' + escapeHtml(cu) + '</div>' +
+      '</div>' +
+      '<div class="location-meta">' + locKeys.length + ' location' + (locKeys.length === 1 ? '' : 's') +
+      ' &middot; ' + cuData.__total.toLocaleString() + ' appointment' + (cuData.__total === 1 ? '' : 's') +
+      '</div>';
+
+    var cuBody = document.createElement('div');
+    cuBody.className = 'care-unit-body';
+    cuBody.style.display = 'none';
+
+    for (var li = 0; li < locKeys.length; li++) {
+      var loc = locKeys[li];
+      var locData = cuData.locations[loc];
+      var locBlock = document.createElement('div');
+      locBlock.className = 'location-block';
+
+      var locHeader = document.createElement('div');
+      locHeader.className = 'location-header';
+      locHeader.innerHTML = '<div class="location-header-left">' +
+        '<div class="card-accent"></div>' +
+        '<div class="location-name">' + escapeHtml(loc) + '</div>' +
+        '</div>' +
+        '<div class="location-meta">' + locData.__total.toLocaleString() + ' appointment' + (locData.__total === 1 ? '' : 's') + '</div>';
+      locBlock.appendChild(locHeader);
+
+      var table = document.createElement('table');
+      table.className = 'services-table';
+      var thead = document.createElement('thead');
+      thead.innerHTML = '<tr>' +
+        '<th>Service</th>' +
+        '<th class="num">Appointment Count</th>' +
+        '<th class="num">Unique Students</th>' +
+        '</tr>';
+      table.appendChild(thead);
+
+      var tbody = document.createElement('tbody');
+      var svcEntries = [];
+      for (var svcName in locData.services) svcEntries.push([svcName, locData.services[svcName]]);
+      svcEntries.sort(function(a, b) { return b[1].count - a[1].count; });
+
+      for (var j = 0; j < svcEntries.length; j++) {
+        var sName = svcEntries[j][0];
+        var sData = svcEntries[j][1];
+        var uniq = Object.keys(sData.students).length;
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td class="service-name">' + escapeHtml(sName) + '</td>' +
+          '<td class="num">' + sData.count.toLocaleString() + '</td>' +
+          '<td class="num">' + uniq.toLocaleString() + '</td>';
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      locBlock.appendChild(table);
+
+      cuBody.appendChild(locBlock);
+    }
+
+    wireCareUnitToggle(cuHeader, cuBody);
+
+    cuBlock.appendChild(cuHeader);
+    cuBlock.appendChild(cuBody);
+    blocksContainer.appendChild(cuBlock);
+  }
+}
+
+function renderByStaff(result) {
+  var blocksContainer = document.getElementById('staff-blocks');
+  blocksContainer.innerHTML = '';
+
+  var cuKeys = Object.keys(result.byStaff).sort(function(a, b) { return a.localeCompare(b); });
+  if (cuKeys.length === 0) {
+    var empty = document.createElement('div');
+    empty.className = 'location-block';
+    empty.innerHTML = '<div class="empty-state">No appointments match the current filters.</div>';
+    blocksContainer.appendChild(empty);
+    return;
+  }
+
+  for (var ci = 0; ci < cuKeys.length; ci++) {
+    var cu = cuKeys[ci];
+    var cuData = result.byStaff[cu];
+    var locKeys = Object.keys(cuData.locations).sort(function(a, b) { return a.localeCompare(b); });
+
+    var cuBlock = document.createElement('div');
+    cuBlock.className = 'care-unit-block';
+
+    var cuHeader = document.createElement('div');
+    cuHeader.className = 'care-unit-header';
+    cuHeader.setAttribute('role', 'button');
+    cuHeader.setAttribute('tabindex', '0');
+    cuHeader.innerHTML = '<div class="care-unit-header-left">' +
+      '<span class="care-unit-toggle">&#9654;</span>' +
+      '<div class="care-unit-name">' + escapeHtml(cu) + '</div>' +
+      '</div>' +
+      '<div class="location-meta">' + locKeys.length + ' location' + (locKeys.length === 1 ? '' : 's') +
+      ' &middot; ' + cuData.__total.toLocaleString() + ' appointment' + (cuData.__total === 1 ? '' : 's') +
+      '</div>';
+
+    var cuBody = document.createElement('div');
+    cuBody.className = 'care-unit-body';
+    cuBody.style.display = 'none';
+
+    for (var li = 0; li < locKeys.length; li++) {
+      var loc = locKeys[li];
+      var locData = cuData.locations[loc];
+      var locBlock = document.createElement('div');
+      locBlock.className = 'location-block';
+
+      var locHeader = document.createElement('div');
+      locHeader.className = 'location-header';
+      locHeader.innerHTML = '<div class="location-header-left">' +
+        '<div class="card-accent"></div>' +
+        '<div class="location-name">' + escapeHtml(loc) + '</div>' +
+        '</div>' +
+        '<div class="location-meta">' + locData.__total.toLocaleString() + ' appointment' + (locData.__total === 1 ? '' : 's') + '</div>';
+      locBlock.appendChild(locHeader);
+
+      // Staff within this location, alphabetical
+      var staffKeys = Object.keys(locData.staff).sort(function(a, b) { return a.localeCompare(b); });
+      var locBody = document.createElement('div');
+      locBody.style.padding = '0.75rem';
+
+      for (var si = 0; si < staffKeys.length; si++) {
+        var stName = staffKeys[si];
+        var stData = locData.staff[stName];
+
+        var stBlock = document.createElement('div');
+        stBlock.className = 'staff-block';
+
+        var stHeader = document.createElement('div');
+        stHeader.className = 'staff-header';
+        stHeader.innerHTML = '<div class="staff-header-left">' +
+          '<div class="staff-accent"></div>' +
+          '<div class="staff-name">' + escapeHtml(stName) + '</div>' +
+          '</div>' +
+          '<div class="location-meta">' + stData.__total.toLocaleString() + ' appointment' + (stData.__total === 1 ? '' : 's') + '</div>';
+        stBlock.appendChild(stHeader);
+
+        var stTable = document.createElement('table');
+        stTable.className = 'services-table';
+        var stThead = document.createElement('thead');
+        stThead.innerHTML = '<tr>' +
+          '<th>Service</th>' +
+          '<th class="num">Appointment Count</th>' +
+          '<th class="num">Unique Students</th>' +
+          '</tr>';
+        stTable.appendChild(stThead);
+
+        var stTbody = document.createElement('tbody');
+        var stSvcEntries = [];
+        for (var svcName2 in stData.services) stSvcEntries.push([svcName2, stData.services[svcName2]]);
+        stSvcEntries.sort(function(a, b) { return b[1].count - a[1].count; });
+
+        for (var k = 0; k < stSvcEntries.length; k++) {
+          var stSName = stSvcEntries[k][0];
+          var stSData = stSvcEntries[k][1];
+          var stUniq = Object.keys(stSData.students).length;
+          var stTr = document.createElement('tr');
+          stTr.innerHTML = '<td class="service-name">' + escapeHtml(stSName) + '</td>' +
+            '<td class="num">' + stSData.count.toLocaleString() + '</td>' +
+            '<td class="num">' + stUniq.toLocaleString() + '</td>';
+          stTbody.appendChild(stTr);
+        }
+        stTable.appendChild(stTbody);
+        stBlock.appendChild(stTable);
+
+        locBody.appendChild(stBlock);
+      }
+      locBlock.appendChild(locBody);
+
+      cuBody.appendChild(locBlock);
+    }
+
+    wireCareUnitToggle(cuHeader, cuBody);
+
+    cuBlock.appendChild(cuHeader);
+    cuBlock.appendChild(cuBody);
+    blocksContainer.appendChild(cuBlock);
+  }
+}
+
+function wireCareUnitToggle(header, body) {
+  function toggle() {
+    var isOpen = body.style.display !== 'none';
+    body.style.display = isOpen ? 'none' : 'block';
+    var t = header.querySelector('.care-unit-toggle');
+    if (t) t.innerHTML = isOpen ? '&#9654;' : '&#9660;';
+    header.classList.toggle('expanded', !isOpen);
+  }
+  header.addEventListener('click', toggle);
+  header.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggle();
+    }
+  });
+}
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// =============================================================================
+// CSV export
+// =============================================================================
+// =============================================================================
+// XLSX export — two sheets: By Location and By Staff
+// =============================================================================
+function exportXlsx() {
+  if (!currentResult) return;
+
+  // Sheet 1: By Location
+  var locRows = [['Care Unit', 'Location', 'Service', 'Appointment Count', 'Unique Students']];
+  var cuKeysL = Object.keys(currentResult.byCU).sort(function(a, b) { return a.localeCompare(b); });
+  for (var ci = 0; ci < cuKeysL.length; ci++) {
+    var cu = cuKeysL[ci];
+    var cuData = currentResult.byCU[cu];
+    var locKeys = Object.keys(cuData.locations).sort(function(a, b) { return a.localeCompare(b); });
+    for (var li = 0; li < locKeys.length; li++) {
+      var loc = locKeys[li];
+      var locData = cuData.locations[loc];
+      var svcEntries = [];
+      for (var svcName in locData.services) svcEntries.push([svcName, locData.services[svcName]]);
+      svcEntries.sort(function(a, b) { return b[1].count - a[1].count; });
+      for (var j = 0; j < svcEntries.length; j++) {
+        var sName = svcEntries[j][0];
+        var sData = svcEntries[j][1];
+        var uniq = Object.keys(sData.students).length;
+        locRows.push([cu, loc, sName, sData.count, uniq]);
+      }
+    }
+  }
+
+  // Sheet 2: By Staff
+  var staffRows = [['Care Unit', 'Location', 'Staff Organizer Name', 'Service', 'Appointment Count', 'Unique Students']];
+  var cuKeysS = Object.keys(currentResult.byStaff).sort(function(a, b) { return a.localeCompare(b); });
+  for (var csi = 0; csi < cuKeysS.length; csi++) {
+    var scu = cuKeysS[csi];
+    var scuData = currentResult.byStaff[scu];
+    var sLocKeys = Object.keys(scuData.locations).sort(function(a, b) { return a.localeCompare(b); });
+    for (var sli = 0; sli < sLocKeys.length; sli++) {
+      var sloc = sLocKeys[sli];
+      var sLocData = scuData.locations[sloc];
+      var staffKeys = Object.keys(sLocData.staff).sort(function(a, b) { return a.localeCompare(b); });
+      for (var ssi = 0; ssi < staffKeys.length; ssi++) {
+        var stName = staffKeys[ssi];
+        var stData = sLocData.staff[stName];
+        var stSvcEntries = [];
+        for (var svcName2 in stData.services) stSvcEntries.push([svcName2, stData.services[svcName2]]);
+        stSvcEntries.sort(function(a, b) { return b[1].count - a[1].count; });
+        for (var k = 0; k < stSvcEntries.length; k++) {
+          var stSName = stSvcEntries[k][0];
+          var stSData = stSvcEntries[k][1];
+          var stUniq = Object.keys(stSData.students).length;
+          staffRows.push([scu, sloc, stName, stSName, stSData.count, stUniq]);
+        }
+      }
+    }
+  }
+
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(locRows), 'By Location');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(staffRows), 'By Staff');
+
+  var now = new Date();
+  var mm = String(now.getMonth() + 1).padStart(2, '0');
+  var dd = String(now.getDate()).padStart(2, '0');
+  var yy = String(now.getFullYear()).slice(-2);
+  var fname = 'Navigate_Services_' + mm + '.' + dd + '.' + yy + '.xlsx';
+  XLSX.writeFile(wb, fname);
+}
+</script>
+</body>
+</html>
