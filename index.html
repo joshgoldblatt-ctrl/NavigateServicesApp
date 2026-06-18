@@ -1,12 +1,70 @@
 <!--
 ================================================================================
   App:          LaGuardia Navigate Appointment Services App
-  Version:      5.0
-  Released:     June 15, 2026
+  Version:      6.1
+  Released:     June 16, 2026
   Developed by: Josh Goldblatt using Claude
 ================================================================================
   CHANGELOG (most recent first)
 --------------------------------------------------------------------------------
+  v6.1  2026-06-16
+    - BUG FIX: blank rows in the upload were being counted. Navigate exports
+      can append a block of all-empty rows (",,,,,," lines with every field
+      blank). The previous "skipEmptyLines: true" only skips truly empty
+      lines, not rows whose fields are all empty, so those rows landed in the
+      data: they inflated "Appointments in File" and then got dropped by the
+      Location/Service step, showing up as "Excluded (Filtered)" even with no
+      filters touched (e.g. 65,883 in file with 17,023 filtered, vs. 48,860
+      real rows). Fix: parse with "skipEmptyLines: 'greedy'" AND drop any row
+      whose every field is blank/whitespace before processing. "Appointments
+      in File" now reflects real data rows only, and "Excluded (Filtered)"
+      returns to ~0 at default.
+  v6.0  2026-06-16
+    - BUG FIX (introduced with the v5.5 Team filter, latent for Staff Name):
+      rows with a BLANK "Staff Organizer Team" (or blank "Staff Organizer
+      Name") were silently excluded at the default "all selected" state. The
+      multi-select options were built only from non-blank values, so a blank
+      value was never in the selected set and every blank-valued row was
+      dropped before de-duplication. Because many Navigate appointments have
+      no team assigned, this removed a large share of the file (e.g. ~21k of
+      ~49k rows in one report). Fix: each of these filters now includes an
+      explicit, checked-by-default "(No team)" / "(No staff organizer name)"
+      bucket, so blank-valued rows are COUNTED by default and can still be
+      toggled off deliberately. renderMultiSelect() now supports a display
+      label distinct from the checkbox value to render these buckets.
+    - Added reconciliation stat cards so the numbers always add up:
+      * "Appointments in File"   = every row in the upload (rawData length)
+      * "Total Appointments"     = after filters + duplicates removed (existing)
+      * "Excluded (Filtered)"    = rows removed by filters (new)
+      * "Excluded (Duplicates)"  = rows removed as duplicates (existing)
+      Identity: In File = Total + Excluded (Filtered) + Excluded (Duplicates).
+      With no manual filters and the blank-bucket fix above, "Excluded
+      (Filtered)" now drops to ~0 (any residual would be blank-Location or
+      blank-Service rows, which are still dropped before counting).
+    - No other behavior changed; dedup, exports, By Location / By Staff, and
+      the rest are unchanged.
+  v5.5  2026-06-16
+    - Added a "Download CSV" button (next to "Download Excel"). It exports the
+      ORIGINAL uploaded rows in their exact original column structure/format
+      (no aggregation, no added columns), limited to the rows that survive the
+      current filters with duplicate appointments removed. A row is included
+      only if it passes Date / Location / Staff / Staff Organizer Team filters,
+      is not flagged as a duplicate, and contains at least one currently
+      selected service (option "A" — the CSV matches exactly what the dashboard
+      is counting). The original "Reported Services" cell is preserved intact
+      (all listed services), and original column order is preserved. Uses
+      Papa.unparse for correct CSV quoting; a UTF-8 BOM is prepended so Excel
+      opens it cleanly. Filename: Navigate_Services_Filtered_MM.DD.YY.csv.
+    - Added a "Staff Organizer Team" filter (multi-select), mirroring the
+      Staff Organizer Name filter: it includes/excludes whole rows by team and
+      is detected from a "Staff Organizer Team" column (also accepts
+      "Staff Organizer Teams" / "Staff Team" / "Organizer Team"). The filter
+      group only appears when that column is present in the upload. Matching is
+      on the whole cell value (one team per row, like the Staff filter); if a
+      row can ever list multiple comma-separated teams, this can be switched to
+      any-match splitting.
+    - Minor: fixed a leftover color variable in the empty "No values found"
+      multi-select message (carried over from the v5.0 design migration).
   v5.0  2026-06-15
     - DESIGN MIGRATION: reskinned the entire app onto the LaGuardia standard
       design system (the same look as the FMP Scan Dashboard and the Check-in
@@ -156,7 +214,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LaGuardia Navigate Appointment Services App - Version 5.0</title>
+<title>LaGuardia Navigate Appointment Services App - Version 6.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -295,7 +353,7 @@ h1 .accent{color:var(--accent)}
 .stat .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin-top:6px;font-weight:600}
 
 /* ---------- Export row ---------- */
-.export-row{display:flex;justify-content:flex-end;margin-bottom:22px}
+.export-row{display:flex;justify-content:flex-end;gap:.75rem;margin-bottom:22px}
 
 /* ---------- Tabs (pill) ---------- */
 .tabs{display:flex;gap:6px;margin-bottom:24px;flex-wrap:wrap}
@@ -370,8 +428,8 @@ h1 .accent{color:var(--accent)}
         <div class="subtitle">Upload a Navigate appointment report CSV to see services broken out by location, with appointment counts, unique students, and duplicate-appointment exclusion.</div>
       </div>
       <div class="meta-box">
-        <b>Version:</b><span>5.0</span>
-        <b>Released:</b><span>June 15, 2026</span>
+        <b>Version:</b><span>6.1</span>
+        <b>Released:</b><span>June 16, 2026</span>
         <b>Developed by:</b><span>Josh Goldblatt using Claude</span>
       </div>
     </div>
@@ -424,6 +482,15 @@ h1 .accent{color:var(--accent)}
           <div class="multi-select-controls">
             <button type="button" class="link-btn" onclick="toggleAll('filter-staff', true)">Select all</button>
             <button type="button" class="link-btn" onclick="toggleAll('filter-staff', false)">Clear</button>
+          </div>
+        </div>
+        <div class="filter-group" id="filter-team-group" style="display: none;">
+          <label>Staff Organizer Team</label>
+          <input type="text" class="multi-select-search" id="filter-team-search" placeholder="Search teams..." oninput="filterMultiSelect('filter-team', this.value)">
+          <div class="multi-select" id="filter-team"></div>
+          <div class="multi-select-controls">
+            <button type="button" class="link-btn" onclick="toggleAll('filter-team', true)">Select all</button>
+            <button type="button" class="link-btn" onclick="toggleAll('filter-team', false)">Clear</button>
           </div>
         </div>
         <div class="filter-group">
@@ -497,6 +564,7 @@ h1 .accent{color:var(--accent)}
 
     <!-- EXPORT -->
     <div class="export-row">
+      <button type="button" class="btn primary" onclick="exportCsv()">Download CSV</button>
       <button type="button" class="btn teal" onclick="exportXlsx()">Download Excel</button>
     </div>
 
@@ -523,18 +591,20 @@ h1 .accent{color:var(--accent)}
 // State
 // =============================================================================
 var rawData = null;       // Full parsed array of row objects
-var columns = null;       // { date, time, services, location, careUnit, staff, studentId }
+var columns = null;       // { date, time, services, location, careUnit, staff, staffTeam, studentId }
 var filters = {
   dateStart: null,
   dateEnd: null,
   locations: null,  // Set of allowed values, or null for "all"
   staff: null,
+  staffTeam: null,
   services: null,
   dedupEnabled: true,    // exclude duplicate appointments
   dedupThreshold: 60     // minutes
 };
 var currentResult = null;   // The currently displayed result (for export)
 var currentDuplicates = []; // Excluded duplicate appointments (for audit + export)
+var currentFilteredRows = []; // Original surviving rows (pass filters, dedup removed) for CSV export
 
 // =============================================================================
 // UI toggles: filter section, tabs, multi-select search
@@ -750,14 +820,22 @@ function handleFile(file) {
 
   Papa.parse(file, {
     header: true,
-    skipEmptyLines: true,
+    skipEmptyLines: 'greedy',
     worker: false,
     complete: function(res) {
-      if (!res.data || res.data.length === 0) {
-        showError('No rows found in the CSV.');
+      // Drop any all-blank rows (e.g. trailing ",,,,," lines Navigate appends),
+      // so they aren't counted as appointments.
+      var rows = (res.data || []).filter(function(row) {
+        for (var k in row) {
+          if (Object.prototype.hasOwnProperty.call(row, k) && row[k] != null && String(row[k]).trim() !== '') return true;
+        }
+        return false;
+      });
+      if (rows.length === 0) {
+        showError('No rows with data found in the CSV.');
         return;
       }
-      rawData = res.data;
+      rawData = rows;
       if (!detectColumns()) return;
       buildFilterOptions();
       resetFilters();
@@ -782,6 +860,7 @@ function detectColumns() {
     location: findColumn(keys, ['Location', 'Office', 'Advising Office']),
     careUnit: findColumn(keys, ['Care Unit', 'Care_Unit', 'CareUnit']),
     staff: findColumn(keys, ['Staff Organizer Name', 'Professional Advisor', 'Advisor']),
+    staffTeam: findColumn(keys, ['Staff Organizer Team', 'Staff Organizer Teams', 'Staff Team', 'Organizer Team']),
     studentId: findColumn(keys, ['Student ID', 'StudentID', 'Student_ID', 'ID'])
   };
   if (!columns.services) {
@@ -801,15 +880,25 @@ function detectColumns() {
 function buildFilterOptions() {
   var locations = new Set();
   var staff = new Set();
+  var teams = new Set();
   var services = new Set();
   var minDt = null, maxDt = null;
 
+  var hasBlankStaff = false, hasBlankTeam = false;
   for (var i = 0; i < rawData.length; i++) {
     var row = rawData[i];
     var loc = row[columns.location];
     if (loc) locations.add(String(loc).trim());
-    var st = columns.staff ? row[columns.staff] : null;
-    if (st) staff.add(String(st).trim());
+    if (columns.staff) {
+      var st = row[columns.staff];
+      if (st && String(st).trim()) staff.add(String(st).trim());
+      else hasBlankStaff = true;
+    }
+    if (columns.staffTeam) {
+      var tm = row[columns.staffTeam];
+      if (tm && String(tm).trim()) teams.add(String(tm).trim());
+      else hasBlankTeam = true;
+    }
     var svcRaw = row[columns.services];
     if (svcRaw) {
       var svcList = String(svcRaw).split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
@@ -824,9 +913,26 @@ function buildFilterOptions() {
     }
   }
 
+  // Staff Organizer Name: include a "(No name)" bucket so blank-name rows
+  // are counted by default (and remain toggleable).
+  var staffArr = Array.from(staff).sort();
+  if (columns.staff && hasBlankStaff) staffArr.unshift({ value: '', label: '(No staff organizer name)' });
   renderMultiSelect('filter-location', Array.from(locations).sort());
-  renderMultiSelect('filter-staff', Array.from(staff).sort());
+  renderMultiSelect('filter-staff', staffArr);
   renderMultiSelect('filter-service', Array.from(services).sort());
+
+  // Staff Organizer Team filter — shown when the column exists and has any
+  // non-blank values. Blank teams get a "(No team)" bucket, checked by default,
+  // so the many appointments without a team are still counted.
+  var teamGroup = document.getElementById('filter-team-group');
+  if (columns.staffTeam && teams.size > 0) {
+    var teamArr = Array.from(teams).sort();
+    if (hasBlankTeam) teamArr.unshift({ value: '', label: '(No team)' });
+    renderMultiSelect('filter-team', teamArr);
+    if (teamGroup) teamGroup.style.display = '';
+  } else {
+    if (teamGroup) teamGroup.style.display = 'none';
+  }
 
   var dStart = document.getElementById('filter-date-start');
   var dEnd = document.getElementById('filter-date-end');
@@ -842,19 +948,21 @@ function renderMultiSelect(containerId, values) {
   var container = document.getElementById(containerId);
   container.innerHTML = '';
   if (values.length === 0) {
-    container.innerHTML = '<div style="font-family: \'Helvetica Neue\', Helvetica, sans-serif; font-size: 12px; color: var(--text-secondary); padding: 4px 0;">No values found</div>';
+    container.innerHTML = '<div style="font-family: \'Source Sans 3\', sans-serif; font-size: 12px; color: var(--ink-soft); padding: 4px 0;">No values found</div>';
     return;
   }
   for (var i = 0; i < values.length; i++) {
-    var id = containerId + '_' + i;
+    var item = values[i];
+    var val = (item && typeof item === 'object') ? item.value : item;
+    var lbl = (item && typeof item === 'object') ? item.label : item;
     var label = document.createElement('label');
     label.className = 'multi-select-item';
     var cb = document.createElement('input');
     cb.type = 'checkbox';
-    cb.value = values[i];
+    cb.value = val;
     cb.checked = true;
     var span = document.createElement('span');
-    span.textContent = values[i];
+    span.textContent = lbl;
     label.appendChild(cb);
     label.appendChild(span);
     container.appendChild(label);
@@ -878,9 +986,10 @@ function resetFilters() {
   document.getElementById('filter-date-end').value = '';
   toggleAll('filter-location', true);
   toggleAll('filter-staff', true);
+  toggleAll('filter-team', true);
   toggleAll('filter-service', true);
   // Clear search boxes and unhide all items
-  var searches = ['filter-location-search', 'filter-staff-search', 'filter-service-search'];
+  var searches = ['filter-location-search', 'filter-staff-search', 'filter-team-search', 'filter-service-search'];
   for (var i = 0; i < searches.length; i++) {
     var el = document.getElementById(searches[i]);
     if (el) el.value = '';
@@ -904,6 +1013,7 @@ function applyFilters() {
   filters.dateEnd = parseISODate(document.getElementById('filter-date-end').value);
   filters.locations = getSelectedMulti('filter-location');
   filters.staff = getSelectedMulti('filter-staff');
+  filters.staffTeam = getSelectedMulti('filter-team');
   filters.services = getSelectedMulti('filter-service');
   var dedupCb = document.getElementById('dedup-enabled');
   filters.dedupEnabled = dedupCb ? dedupCb.checked : false;
@@ -953,6 +1063,13 @@ function computeAndRender() {
     // Filter by staff
     if (columns.staff && filters.staff && filters.staff.size > 0) {
       if (!filters.staff.has(staffStr === 'Unknown Staff' ? '' : staffStr)) continue;
+    }
+
+    // Staff Organizer Team
+    if (columns.staffTeam && filters.staffTeam && filters.staffTeam.size > 0) {
+      var teamName = row[columns.staffTeam];
+      var teamStr = teamName ? String(teamName).trim() : '';
+      if (!filters.staffTeam.has(teamStr)) continue;
     }
 
     // Filter by date (date-only comparison, matching prior behavior)
@@ -1015,6 +1132,7 @@ function computeAndRender() {
     }
   }
   currentDuplicates = duplicates;
+  currentFilteredRows = [];
 
   // ---- Pass 3: count the kept rows (apply service filter + unbundle) ----
   for (var p = 0; p < inScope.length; p++) {
@@ -1031,6 +1149,9 @@ function computeAndRender() {
       return !filters.services || filters.services.size === 0 || filters.services.has(s);
     });
     if (svcsForRow.length === 0) continue;
+
+    // Surviving original row (passed all filters, not a duplicate) — for CSV export
+    currentFilteredRows.push(row2);
 
     totalAppointments++;
     uniqueLocations.add(loc2);
@@ -1080,6 +1201,8 @@ function computeAndRender() {
     dedupEnabled: filters.dedupEnabled,
     dedupThreshold: filters.dedupThreshold,
     excludedDuplicateCount: duplicates.length,
+    originalCount: rawData.length,
+    excludedFilteredCount: rawData.length - duplicates.length - totalAppointments,
     timeColumnMissing: filters.dedupEnabled && !columns.time,
     timeUnreadable: filters.dedupEnabled && !!columns.time && inScope.length > 0 && tsParsed === 0
   };
@@ -1098,14 +1221,16 @@ function renderResult(result) {
     return item;
   }
 
+  scorecard.appendChild(addStat('Appointments in File', result.originalCount.toLocaleString(), ''));
   scorecard.appendChild(addStat('Total Appointments', result.totalAppointments.toLocaleString(), 'ink'));
+  scorecard.appendChild(addStat('Excluded (Filtered)', result.excludedFilteredCount.toLocaleString(), 'gold'));
+  if (result.dedupEnabled) {
+    scorecard.appendChild(addStat('Excluded (Duplicates)', result.excludedDuplicateCount.toLocaleString(), 'gold'));
+  }
   scorecard.appendChild(addStat('Care Units', result.careUnitCount.toLocaleString(), ''));
   scorecard.appendChild(addStat('Locations', result.locationCount.toLocaleString(), ''));
   scorecard.appendChild(addStat('Staff Organizers', result.uniqueStaffCount.toLocaleString(), ''));
   scorecard.appendChild(addStat('Unique Services', result.uniqueServiceCount.toLocaleString(), 'teal'));
-  if (result.dedupEnabled) {
-    scorecard.appendChild(addStat('Excluded (Duplicates)', result.excludedDuplicateCount.toLocaleString(), 'gold'));
-  }
 
   // Warn if exclusion is on but the time window can't be measured
   var warn = document.getElementById('dedup-warning');
@@ -1483,6 +1608,39 @@ function exportDuplicates() {
   var dd = String(now.getDate()).padStart(2, '0');
   var yy = String(now.getFullYear()).slice(-2);
   XLSX.writeFile(wb, 'Navigate_Services_Duplicates_' + mm + '.' + dd + '.' + yy + '.xlsx');
+}
+
+// =============================================================================
+// CSV export — surviving original rows (filters applied, duplicates removed),
+// in the exact original column structure of the uploaded file.
+// =============================================================================
+function exportCsv() {
+  if (!currentResult) return;
+  if (!currentFilteredRows.length) {
+    showError('No rows to export with the current filters.');
+    return;
+  }
+
+  // Preserve the original column order exactly as uploaded.
+  var headers = Object.keys(rawData[0]);
+  var csv = Papa.unparse({ fields: headers, data: currentFilteredRows }, {
+    quotes: false,        // quote only when needed (commas, quotes, newlines)
+    newline: '\r\n'
+  });
+
+  var blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  var now = new Date();
+  var mm = String(now.getMonth() + 1).padStart(2, '0');
+  var dd = String(now.getDate()).padStart(2, '0');
+  var yy = String(now.getFullYear()).slice(-2);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'Navigate_Services_Filtered_' + mm + '.' + dd + '.' + yy + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // =============================================================================
